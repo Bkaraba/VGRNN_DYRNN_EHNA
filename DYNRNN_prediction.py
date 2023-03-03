@@ -1,3 +1,9 @@
+
+Conversations
+9.79 GB of 15 GB used
+Terms · Privacy · Program Policies
+Last account activity: 2 minutes ago
+Details
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -18,6 +24,7 @@ from sklearn.datasets import fetch_openml
 # from torch_geometric import nn as tgnn
 from input_data import load_data
 from preprocessing import preprocess_graph, construct_feed_dict, sparse_to_tuple, mask_test_edges
+from scipy.sparse import spmatrix
 import scipy.sparse as sp
 from scipy.linalg import block_diag
 from torch.nn.parameter import Parameter
@@ -770,6 +777,35 @@ import torch.nn as nn
 
 # DynRNN model and its components
 # Multi-layer LSTM class
+'''class MLLSTM(nn.Module):
+    input_dim: int
+    output_dim: int
+    bias: bool
+    layer_list: nn.ModuleList
+    layer_num: int
+
+    def __init__(self, input_dim, output_dim, n_units, bias=True):
+        super(MLLSTM, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.bias = bias
+
+        self.layer_list = nn.ModuleList()
+        self.layer_list.append(nn.LSTM(input_dim, n_units[0], bias=bias, batch_first=True))
+
+        layer_num = len(n_units)
+        for i in range(1, layer_num):
+            self.layer_list.append(nn.LSTM(n_units[i - 1], n_units[i], bias=bias, batch_first=True))
+        self.layer_list.append(nn.LSTM(n_units[-1], output_dim, bias=bias, batch_first=True))
+        self.layer_num = layer_num + 1
+
+    def forward(self, x):
+        for i in range(self.layer_num):
+            x, _ = self.layer_list[i](x)
+        # return outputs and the last hidden embedding matrix
+        return x, x[:, -1, :]'''
+
+
 class MLLSTM(nn.Module):
     input_dim: int
     output_dim: int
@@ -782,6 +818,9 @@ class MLLSTM(nn.Module):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.bias = bias
+
+        if isinstance(n_units, int):
+            n_units = [n_units]
 
         self.layer_list = nn.ModuleList()
         self.layer_list.append(nn.LSTM(input_dim, n_units[0], bias=bias, batch_first=True))
@@ -809,7 +848,7 @@ class DynRNN(nn.Module):
     encoder: MLLSTM
     decoder: MLLSTM
 
-    def __init__(self, input_dim, output_dim, look_back=3, n_units=None,  bias=True, **kwargs):
+    def __init__(self, input_dim, output_dim, look_back=3, n_units=[64,32,16],  bias=True, **kwargs):
         super(DynRNN, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -863,161 +902,6 @@ def get_roc_scores(edges_pos, edges_neg, adj_orig_dense_list, embs):
 # In[10]:
 
 
-# VGRNN model
-
-class VGRNN(nn.Module):
-    def __init__(self, x_dim, h_dim, z_dim, n_layers, eps, conv='GCN', bias=False):
-        super(VGRNN, self).__init__()
-        
-        self.x_dim = x_dim
-        self.eps = eps
-        self.h_dim = h_dim
-        self.z_dim = z_dim
-        self.n_layers = n_layers
-        
-        if conv == 'GCN':
-            self.phi_x = nn.Sequential(nn.Linear(x_dim, h_dim), nn.ReLU())
-            self.phi_z = nn.Sequential(nn.Linear(z_dim, h_dim), nn.ReLU())
-            
-            self.enc = GCNConv(h_dim + h_dim, h_dim)            
-            self.enc_mean = GCNConv(h_dim, z_dim, act=lambda x:x)
-            self.enc_std = GCNConv(h_dim, z_dim, act=F.softplus)
-            
-            self.prior = nn.Sequential(nn.Linear(h_dim, h_dim), nn.ReLU())
-            self.prior_mean = nn.Sequential(nn.Linear(h_dim, z_dim))
-            self.prior_std = nn.Sequential(nn.Linear(h_dim, z_dim), nn.Softplus())
-            
-            self.rnn = graph_gru_gcn(h_dim + h_dim, h_dim, n_layers, bias)
-            
-        elif conv == 'SAGE':
-            self.phi_x = nn.Sequential(nn.Linear(x_dim, h_dim), nn.ReLU())
-            self.phi_z = nn.Sequential(nn.Linear(z_dim, h_dim), nn.ReLU())
-            
-            self.enc = SAGEConv(h_dim + h_dim, h_dim)
-            self.enc_mean = SAGEConv(h_dim, z_dim, act=lambda x:x)
-            self.enc_std = SAGEConv(h_dim, z_dim, act=F.softplus)
-            
-            self.prior = nn.Sequential(nn.Linear(h_dim, h_dim), nn.ReLU())
-            self.prior_mean = nn.Sequential(nn.Linear(h_dim, z_dim))
-            self.prior_std = nn.Sequential(nn.Linear(h_dim, z_dim), nn.Softplus())
-            
-            self.rnn = graph_gru_sage(h_dim + h_dim, h_dim, n_layers, bias)
-            
-        elif conv == 'GIN':
-            self.phi_x = nn.Sequential(nn.Linear(x_dim, h_dim), nn.ReLU())
-            self.phi_z = nn.Sequential(nn.Linear(z_dim, h_dim), nn.ReLU())
-            
-            self.enc = GINConv(nn.Sequential(nn.Linear(h_dim + h_dim, h_dim), nn.ReLU()))            
-            self.enc_mean = GINConv(nn.Sequential(nn.Linear(h_dim, z_dim)))
-            self.enc_std = GINConv(nn.Sequential(nn.Linear(h_dim, z_dim), nn.Softplus()))
-            
-            self.prior = nn.Sequential(nn.Linear(h_dim, h_dim), nn.ReLU())
-            self.prior_mean = nn.Sequential(nn.Linear(h_dim, z_dim))
-            self.prior_std = nn.Sequential(nn.Linear(h_dim, z_dim), nn.Softplus())
-            
-            self.rnn = graph_gru_gcn(h_dim + h_dim, h_dim, n_layers, bias)  
-    
-    def forward(self, x, edge_idx_list, adj_orig_dense_list, hidden_in=None):
-        assert len(adj_orig_dense_list) == len(edge_idx_list)
-        
-        kld_loss = 0
-        nll_loss = 0
-        all_enc_mean, all_enc_std = [], []
-        all_prior_mean, all_prior_std = [], []
-        all_dec_t, all_z_t = [], []
-        
-        if hidden_in is None:
-            h = Variable(torch.zeros(self.n_layers, x.size(1), self.h_dim))
-        else:
-            h = Variable(hidden_in)
-        
-        for t in range(x.size(0)):
-            phi_x_t = self.phi_x(x[t])
-            
-            #encoder
-            enc_t = self.enc(torch.cat([phi_x_t, h[-1]], 1), edge_idx_list[t])
-            enc_mean_t = self.enc_mean(enc_t, edge_idx_list[t])
-            enc_std_t = self.enc_std(enc_t, edge_idx_list[t])
-            
-            #prior
-            prior_t = self.prior(h[-1])
-            prior_mean_t = self.prior_mean(prior_t)
-            prior_std_t = self.prior_std(prior_t)
-            
-            #sampling and reparameterization
-            z_t = self._reparameterized_sample(enc_mean_t, enc_std_t)
-            phi_z_t = self.phi_z(z_t)
-            
-            #decoder
-            dec_t = self.dec(z_t)
-            
-            #recurrence
-            _, h = self.rnn(torch.cat([phi_x_t, phi_z_t], 1), edge_idx_list[t], h)
-            
-            nnodes = adj_orig_dense_list[t].size()[0]
-            enc_mean_t_sl = enc_mean_t[0:nnodes, :]
-            enc_std_t_sl = enc_std_t[0:nnodes, :]
-            prior_mean_t_sl = prior_mean_t[0:nnodes, :]
-            prior_std_t_sl = prior_std_t[0:nnodes, :]
-            dec_t_sl = dec_t[0:nnodes, 0:nnodes]
-            
-            #computing losses
-#             kld_loss += self._kld_gauss_zu(enc_mean_t, enc_std_t)
-            kld_loss += self._kld_gauss(enc_mean_t_sl, enc_std_t_sl, prior_mean_t_sl, prior_std_t_sl)
-            nll_loss += self._nll_bernoulli(dec_t_sl, adj_orig_dense_list[t])
-            
-            all_enc_std.append(enc_std_t_sl)
-            all_enc_mean.append(enc_mean_t_sl)
-            all_prior_mean.append(prior_mean_t_sl)
-            all_prior_std.append(prior_std_t_sl)
-            all_dec_t.append(dec_t_sl)
-            all_z_t.append(z_t)
-        
-        return kld_loss, nll_loss, all_enc_mean, all_prior_mean, h
-    
-    def dec(self, z):
-        outputs = InnerProductDecoder(act=lambda x:x)(z)
-        return outputs
-    
-    def reset_parameters(self, stdv=1e-1):
-        for weight in self.parameters():
-            weight.data.normal_(0, stdv)
-     
-    def _init_weights(self, stdv):
-        pass
-    
-    def _reparameterized_sample(self, mean, std):
-        eps1 = torch.FloatTensor(std.size()).normal_()
-        eps1 = Variable(eps1)
-        return eps1.mul(std).add_(mean)
-    
-    def _kld_gauss(self, mean_1, std_1, mean_2, std_2):
-        num_nodes = mean_1.size()[0]
-        kld_element =  (2 * torch.log(std_2 + self.eps) - 2 * torch.log(std_1 + self.eps) +
-                        (torch.pow(std_1 + self.eps ,2) + torch.pow(mean_1 - mean_2, 2)) / 
-                        torch.pow(std_2 + self.eps ,2) - 1)
-        return (0.5 / num_nodes) * torch.mean(torch.sum(kld_element, dim=1), dim=0)
-    
-    def _kld_gauss_zu(self, mean_in, std_in):
-        num_nodes = mean_in.size()[0]
-        std_log = torch.log(std_in + self.eps)
-        kld_element =  torch.mean(torch.sum(1 + 2 * std_log - mean_in.pow(2) -
-                                            torch.pow(torch.exp(std_log), 2), 1))
-        return (-0.5 / num_nodes) * kld_element
-    
-    def _nll_bernoulli(self, logits, target_adj_dense):
-        temp_size = target_adj_dense.size()[0]
-        temp_sum = target_adj_dense.sum()
-        posw = float(temp_size * temp_size - temp_sum) / temp_sum
-        norm = temp_size * temp_size / float((temp_size * temp_size - temp_sum) * 2)
-        nll_loss_mat = F.binary_cross_entropy_with_logits(input=logits
-                                                          , target=target_adj_dense
-                                                          , pos_weight=posw
-                                                          , reduction='none')
-        nll_loss = -1 * norm * torch.mean(nll_loss_mat, dim=[0,1])
-        return - nll_loss
-    
-
 
 # In[11]:
 
@@ -1052,53 +936,72 @@ x_in = Variable(torch.stack(x_in_list))
 # In[13]:
 
 
-# building model
+# In[14]:
+# Define the input and output dimensions
+input_dim = x_dim
+output_dim = x_dim
 
-model = VGRNN(x_dim, h_dim, z_dim, n_layers, eps, conv=conv_type, bias=True)
+# Define the DynRNN model
+model = DynRNN(input_dim, output_dim)
+
+# Define the loss function
+criterion = nn.MSELoss()
+
+# Define the optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-
-# In[14]:
-
-
-# training
-
+# Training loop
 seq_start = 0
-seq_end = seq_len - 3
+seq_len = 663
+seq_end = seq_len - 1
 tst_after = 0
 
 for k in range(1000):
     optimizer.zero_grad()
     start_time = time.time()
-    kld_loss, nll_loss, _, _, hidden_st = model(x_in[seq_start:seq_end]
-                                                , edge_idx_list[seq_start:seq_end]
-                                                , adj_orig_dense_list[seq_start:seq_end])
-    loss = kld_loss + nll_loss
+
+    # Forward pass
+    hx, x_pred = model(x_in[seq_start:seq_end]+1)
+    # assume x_pred is the tensor with shape [9, 663]
+    desired_shape = [9, 663, 663]
+    new_tensor = torch.zeros(desired_shape)
+
+    # copy the values of x_pred into the new tensor
+    new_tensor[:9, :, :663] = x_pred.unsqueeze(1)
+
+    #new_tensor[:, :663, :663] = x_pred.unsqueeze(1)
+
+    # new_tensor now has the desired shape [9, 663, 663]
+    x_pred = new_tensor
+    x_pred = x_pred[:8]
+
+    #print('x_pred shape:', x_pred.shape, 'x_in shape:', x_in[seq_start+1:seq_end+1].shape)
+
+    # Compute the loss
+    loss = criterion(x_pred, x_in[seq_start+1:seq_end+1])
+
+    # Backward pass
     loss.backward()
     optimizer.step()
-    
-    nn.utils.clip_grad_norm(model.parameters(), clip)
-    
-    if k>tst_after:
-        _, _, enc_means, pri_means, _ = model(x_in[seq_end:seq_len]
-                                              , edge_idx_list[seq_end:seq_len]
-                                              , adj_orig_dense_list[seq_end:seq_len]
-                                              , hidden_st)
+
+    if k > tst_after:
+        # Evaluate the model on the test set
+        hx, x_pred = model(x_in[seq_end:seq_len])
+        loss_test = criterion(x_pred, x_in[seq_end+1:seq_len])
+
+        # Compute AUC and AP scores
+        auc_scores_prd, ap_scores_prd = get_roc_scores(pos_edges_l[seq_end:seq_len],
+                                                       false_edges_l[seq_end:seq_len],
+                                                       adj_orig_dense_list[seq_end:seq_len],
+                                                       x_pred.detach().numpy())
         
-        auc_scores_prd, ap_scores_prd = get_roc_scores(pos_edges_l[seq_end:seq_len]
-                                                        , false_edges_l[seq_end:seq_len]
-                                                        , adj_orig_dense_list[seq_end:seq_len]
-                                                        , pri_means)
-        
-        auc_scores_prd_new, ap_scores_prd_new = get_roc_scores(pos_edges_l_n[seq_end:seq_len]
-                                                                , false_edges_l_n[seq_end:seq_len]
-                                                                , adj_orig_dense_list[seq_end:seq_len]
-                                                                , pri_means)
-        
+        auc_scores_prd_new, ap_scores_prd_new = get_roc_scores(pos_edges_l_n[seq_end:seq_len],
+                                                               false_edges_l_n[seq_end:seq_len],
+                                                               adj_orig_dense_list[seq_end:seq_len],
+                                                               x_pred.detach().numpy())      
     
     print('epoch: ', k)
-    print('kld_loss =', kld_loss.mean().item())
-    print('nll_loss =', nll_loss.mean().item())
+    print('MSE loss =', loss.mean().item())
     print('loss =', loss.mean().item())
     if k>tst_after:
         print('----------------------------------')
@@ -1111,4 +1014,3 @@ for k in range(1000):
         print('new_link_prd_ap_mean', np.mean(np.array(ap_scores_prd_new)))
         print('----------------------------------')
     print('----------------------------------')
-
