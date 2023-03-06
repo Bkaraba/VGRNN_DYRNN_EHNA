@@ -930,6 +930,7 @@ x_in = Variable(torch.stack(x_in_list))
 # In[13]:
 
 
+
 # In[14]:
 # Define the input and output dimensions
 input_dim = x_dim
@@ -950,10 +951,26 @@ seq_len = 663
 seq_end = seq_len - 1
 tst_after = 0
 
-for k in range(1000):
+for k in range(50):
     optimizer.zero_grad()
     start_time = time.time()
+    def precision_score(y_true, y_pred):
+        true_positives = np.sum(np.round(np.clip(y_true * y_pred, 0, 1)))
+        predicted_positives = np.sum(np.round(np.clip(y_pred, 0, 1)))
+        precision = true_positives / (predicted_positives + 1e-7)
+        return precision
 
+    def recall_score(y_true, y_pred):
+        true_positives = np.sum(np.round(np.clip(y_true * y_pred, 0, 1)))
+        possible_positives = np.sum(np.round(np.clip(y_true, 0, 1)))
+        recall = true_positives / (possible_positives + 1e-7)
+        return recall
+
+    def f1_score(y_true, y_pred):
+        p = precision_score(y_true, y_pred)
+        r = recall_score(y_true, y_pred)
+        f1 = 2 * (p * r) / (p + r + 1e-7)
+        return f1
     # Forward pass
     hx, x_pred = model(x_in[seq_start:seq_end]+1)
     # assume x_pred is the tensor with shape [9, 663]
@@ -974,14 +991,21 @@ for k in range(1000):
     # Compute the loss
     loss = criterion(x_pred, x_in[seq_start+1:seq_end+1])
 
+     # Compute precision, recall, and F1 scores
+    preds = torch.sigmoid(x_pred).detach().numpy()
+    binary_preds = (preds > 0.5).astype(int)
+    precision = precision_score(x_in[seq_start+1:seq_end+1].detach().numpy(), binary_preds)
+    recall = recall_score(x_in[seq_start+1:seq_end+1].detach().numpy(), binary_preds)
+    f1 = f1_score(x_in[seq_start+1:seq_end+1].detach().numpy(), binary_preds)
+
     # Backward pass
     loss.backward()
     optimizer.step()
 
     if k > tst_after:
         # Evaluate the model on the test set
-        hx, x_pred = model(x_in[seq_end:seq_len])
-        loss_test = criterion(x_pred, x_in[seq_end+1:seq_len])
+        #hx, x_pred = model(x_in[seq_end:seq_len])
+        #loss_test = criterion(x_pred, x_in[seq_end+1:seq_len])
 
         # Compute AUC and AP scores
         auc_scores_prd, ap_scores_prd = get_roc_scores(pos_edges_l[seq_end:seq_len],
@@ -997,14 +1021,7 @@ for k in range(1000):
     print('epoch: ', k)
     print('MSE loss =', loss.mean().item())
     print('loss =', loss.mean().item())
-    if k>tst_after:
-        print('----------------------------------')
-        print('Link Prediction')
-        print('link_prd_auc_mean', np.mean(np.array(auc_scores_prd)))
-        print('link_prd_ap_mean', np.mean(np.array(ap_scores_prd)))
-        print('----------------------------------')
-        print('New Link Prediction')
-        print('new_link_prd_auc_mean', np.mean(np.array(auc_scores_prd_new)))
-        print('new_link_prd_ap_mean', np.mean(np.array(ap_scores_prd_new)))
-        print('----------------------------------')
-    print('----------------------------------')
+    print('precision =', precision)
+    print('recall =', recall)
+    print('F1 =', f1)
+    
