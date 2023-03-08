@@ -1,8 +1,10 @@
 import numpy as np
 import pickle
 import torch
+#from torch._C import double
 import torch.nn as nn
 import torch.optim as optim
+from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import f1_score, precision_score, recall_score
 from torch.utils.data import TensorDataset, DataLoader
 
@@ -15,130 +17,143 @@ class EHNA(nn.Module):
         self.fc1 = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
+        x = x.float() 
         output, hn = self.rnn(x)
         hn = hn.squeeze()
         output = self.fc1(hn)
         return output
-        
+
 # load the data
 with open('data/fb/adj_time_list.pickle', 'rb') as handle:
     adj_time_list = pickle.load(handle, encoding='latin1')
 
 with open('data/fb/adj_orig_dense_list.pickle', 'rb') as handle:
     adj_orig_dense_list = pickle.load(handle, encoding='bytes')
-   
+
+# convert adj_time_list and adj_orig_dense_list to PyTorch tensors
+#adj_time_list = torch.tensor(adj_time_list)
+adj_orig_dense_list = torch.stack(adj_orig_dense_list)
+
 # define the number of nodes and features in the dataset
-num_nodes = adj_orig_dense_list[0].shape[0]
-num_features = 1
+num_nodes = adj_orig_dense_list[0].shape[1]
+num_features = 663
 
 # create a list to store the features for each time step
 features_list = []
 
-
-# loop through each time step and create a feature matrix for each time step
-# loop through each time step and create a feature matrix for each time step
 for adj_dense in adj_orig_dense_list:
     mask = adj_dense > 0
-    #mask = mask.unsqueeze(-1)
-
-    # convert the adjacency matrix to a binary feature matrix
     features = np.zeros((num_nodes, num_features))
-    mask = np.expand_dims(mask, axis=-1)
-
-    # create a new tensor with shape (num_nodes, num_nodes, num_features) and copy the values of mask into it
-    # create a binary mask tensor
-    desired_shape = (num_nodes, num_nodes, num_features)
-    new_tensor = np.zeros(desired_shape)
-    #print(mask.shape)
-    #print(new_tensor.shape)
-
-    #new_tensor[:, :, 0] = mask.squeeze(1)
-
-    # assign the new tensor to features
-    features = new_tensor
-
+    features = torch.tensor(features)
     features_list.append(features)
-    #print(features_list)
 
+# convert the features list to a PyTorch tensor
+features_tensor = torch.stack(features_list)
 
+# create a target tensor that has the same shape as the output of the model
+target = adj_orig_dense_list.reshape(-1, num_nodes * num_nodes)
 
-# convert the feature list to a numpy array of shape (num_samples, num_timesteps, num_nodes, num_features)
-features_array = np.array(features_list)
-num_samples, num_timesteps = features_array.shape[:2]
+# split the dataset into training and validation sets
+train_size = int(0.8 * len(features_tensor))
+val_size = len(features_tensor) - train_size
 
-# add an extra dimension to the features array to match the required format of the EHNA model
-features_array = np.expand_dims(features_array, axis=4)
+train_features = features_tensor[:train_size]
+train_target = target[:train_size]
 
-# create the adjacency matrix tensor of shape (num_samples, num_timesteps, num_nodes, num_nodes)
-adj_tensor = np.zeros((num_samples, num_timesteps, num_nodes, num_nodes))
-for i, adj_time in enumerate(adj_orig_dense_list):
-    adj_tensor[i, :, :, :] = adj_time
+val_features = features_tensor[train_size:]
+val_target = target[train_size:]
 
-# convert the adjacency matrix tensor to a binary tensor of shape (num_samples, num_timesteps, num_nodes, num_nodes)
-adj_tensor[adj_tensor > 0] = 1
+# create PyTorch dataloaders for the training and validation sets
+train_dataset = TensorDataset(train_features, train_target)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
-# create the label tensor of shape (num_samples, num_timesteps, num_nodes, num_features)
-labels_tensor = features_array.copy()
-labels_tensor[:, :-1, :, :] = labels_tensor[:, 1:, :, :]
+val_dataset = TensorDataset(val_features, val_target)
+val_loader = DataLoader(val_dataset, batch_size=32)
 
-#split the dataset into training and test sets
-train_idx = int(0.8 * num_samples)
-x_train, x_test = features_array[:train_idx], features_array[train_idx:]
-y_train, y_test = labels_tensor[:train_idx], labels_tensor[train_idx:]
-adj_train, adj_test = adj_tensor[:train_idx], adj_tensor[train_idx:]
-
-#Create tensor datasets
-train_data = torch.utils.data.TensorDataset(torch.FloatTensor(x_train), torch.FloatTensor(y_train))
-test_data = torch.utils.data.TensorDataset(torch.FloatTensor(x_test), torch.FloatTensor(y_test))
-
-#Define dataloaders
-batch_size = 32
-train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True)
-test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=False)
-
-#Define training parameters
-num_temporal_dimensions = adj_orig_dense_list.shape[0]
-input_size = num_nodes + num_temporal_dimensions
-hidden_size = 64 # Change this value based on your preference
-output_size = 1 # Change this value based on your task
-
-learning_rate = 0.01
-num_epochs = 50
-
-#model
-model = EHNA(input_size,hidden_size,output_size)
-
-
-#Define loss function and optimizer
+# initialize the EHNA model and define the loss function and optimizer
+ehna_model = EHNA(input_size=num_features, hidden_size=128, output_size=num_nodes * num_nodes)
 criterion = nn.MSELoss()
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+optimizer = optim.Adam(ehna_model.parameters(), lr=0.001)
 
-#Train EHNA model
+# set device to CPU or GPU
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
+
+# set number of epochs
+num_epochs = 10
+
+# initialize lists to store loss and accuracy for each epoch
+train_losses = []
+val_losses = []
+accuracies = []
+
+
+# train the model
 for epoch in range(num_epochs):
-  running_loss = 0.0
-  for inputs, labels in train_loader:
-    optimizer.zero_grad()
+    # set model to training mode
+    ehna_model.train()
 
-    # Forward pass
-    outputs = model(inputs)
-    loss = criterion(outputs, labels)
+    # initialize running loss
+    running_loss = 0.0
 
-    # Backward pass
-    loss.backward()
-    optimizer.step()
+    # loop over training set in batches
+    for i, (inputs, labels) in enumerate(train_loader):
+        # move inputs and labels to device
+        #inputs = inputs.to(device)
+        #labels = labels.to(device)
+        inputs = inputs.double()
+        #inputs.to(torch.double)
+        print(inputs.dtype)
 
-    running_loss += loss.item()
+        # zero the parameter gradients
+        optimizer.zero_grad()
 
-# Evaluate EHNA model on test dataset
-with torch.no_grad():
-    test_inputs, test_labels = next(iter(test_loader))
-    predictions = model(test_inputs)
-    binary_preds = (predictions > 0.5).float()
-    f1 = f1_score(test_labels.numpy(), binary_preds.numpy(), average='micro')
-    precision = precision_score(test_labels.numpy(), binary_preds.numpy(), average='micro')
-    recall = recall_score(test_labels.numpy(), binary_preds.numpy(), average='micro')
-    test_loss = criterion(predictions, test_labels)
+        # forward pass
+        outputs = ehna_model(inputs.double())
 
-print('Epoch: {}, Loss: {:.4f}, Test Loss: {:.4f}, F1 score: {:.4f}, Precision: {:.4f}, Recall: {:.4f}'.format(epoch+1, running_loss, test_loss, f1, precision, recall)) 
-#save the trained model
-torch.save(model.state_dict(), 'models/EHNA_model.pth')
+        # compute loss
+        loss = criterion(outputs, labels)
+
+        # backward pass and optimize
+        loss.backward()
+        optimizer.step()
+
+        # update running loss
+        running_loss += loss.item()
+
+    # append training loss for this epoch
+    train_losses.append(running_loss / len(train_loader))
+
+    # switch model to evaluation mode and disable gradient calculation
+    ehna_model.eval()
+    with torch.no_grad():
+        # initialize validation loss and accuracy
+        val_loss = 0.0
+        correct = 0
+        total = 0
+
+        # loop over validation set in batches
+        for inputs, labels in val_loader:
+            # move inputs and labels to device
+            #inputs = inputs.to(device)
+            #labels = labels.to(device)
+
+            # forward pass
+            outputs = ehna_model(inputs)
+
+            # compute loss
+            val_loss += criterion(outputs, labels).item()
+
+        # append validation loss for this epoch
+        val_losses.append(val_loss / len(val_loader))
+
+    # calculate precision, recall, and F1 score
+    #precision, recall, f1 = calculate_metrics(ehna_model, val_loader)
+
+    # append accuracy for this epoch
+    #accuracies.append(f1)
+
+    # print metrics for this epoch
+    print('epoch:', epoch+1)
+    print('training loss:', train_losses[-1])
+    print('validation loss:', val_losses[-1])
