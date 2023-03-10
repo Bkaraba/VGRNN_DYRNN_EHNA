@@ -23,6 +23,34 @@ class EHNA(nn.Module):
         output = self.fc1(hn)
         return output
 
+def calculate_metrics(model, dataloader):
+    y_true = []
+    y_pred = []
+
+    for inputs, labels in dataloader:
+        # forward pass
+        outputs = model(inputs)
+
+        # convert outputs and labels to numpy arrays
+        outputs = outputs.detach().numpy()
+        labels = labels.detach().numpy()
+
+        # append true and predicted labels to lists
+        y_true.extend(labels.flatten())
+        y_pred.extend(outputs.flatten())
+
+    # convert true and predicted labels to numpy arrays
+    y_true = np.array(y_true)
+    y_pred = np.array(y_pred)
+
+    # threshold predicted labels
+    y_pred = np.where(y_pred > 0, 1, 0)
+
+    # calculate precision, recall, and F1 score
+    precision, recall, f1, _ = precision_recall_fscore_support(y_true, y_pred, average='binary')
+
+    return precision, recall, f1
+
 # load the data
 with open('data/fb/adj_time_list.pickle', 'rb') as handle:
     adj_time_list = pickle.load(handle, encoding='latin1')
@@ -80,7 +108,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 # set number of epochs
-num_epochs = 10
+num_epochs = 50
 
 # initialize lists to store loss and accuracy for each epoch
 train_losses = []
@@ -103,7 +131,7 @@ for epoch in range(num_epochs):
         #labels = labels.to(device)
         inputs = inputs.double()
         #inputs.to(torch.double)
-        print(inputs.dtype)
+        #print(inputs.dtype)
 
         # zero the parameter gradients
         optimizer.zero_grad()
@@ -148,12 +176,16 @@ for epoch in range(num_epochs):
         val_losses.append(val_loss / len(val_loader))
 
     # calculate precision, recall, and F1 score
-    #precision, recall, f1 = calculate_metrics(ehna_model, val_loader)
+    precision, recall, f1 = calculate_metrics(ehna_model, val_loader)
 
     # append accuracy for this epoch
-    #accuracies.append(f1)
+    accuracies.append(f1)
 
     # print metrics for this epoch
     print('epoch:', epoch+1)
     print('training loss:', train_losses[-1])
     print('validation loss:', val_losses[-1])
+    print('f1:', f1)
+    print("precision:", precision)
+    print('recall:', recall)
+
