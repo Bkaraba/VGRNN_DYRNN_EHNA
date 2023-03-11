@@ -1017,11 +1017,12 @@ for k in range(50):
                                                                false_edges_l_n[seq_end:seq_len],
                                                                adj_orig_dense_list[seq_end:seq_len],
                                                                x_pred.detach().numpy())      
-    
+    end_time = time.time()
+    time_cost = end_time - start_time
     print('epoch: ', k)
     print('MSE loss =', loss.mean().item())
     print('loss =', loss.mean().item())
     print('precision =', precision)
     print('recall =', recall)
     print('F1 =', f1)
-    
+    print('time_cost = {:2f} seconds'.format(time_cost)) 

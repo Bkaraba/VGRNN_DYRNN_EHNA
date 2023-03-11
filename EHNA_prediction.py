@@ -118,6 +118,7 @@ accuracies = []
 
 # train the model
 for epoch in range(num_epochs):
+    start_time = time.time()
     # set model to training mode
     ehna_model.train()
 
@@ -180,7 +181,8 @@ for epoch in range(num_epochs):
 
     # append accuracy for this epoch
     accuracies.append(f1)
-
+    end_time = time.time()
+    time_cost = end_time - start_time
     # print metrics for this epoch
     print('epoch:', epoch+1)
     print('training loss:', train_losses[-1])
@@ -188,4 +190,5 @@ for epoch in range(num_epochs):
     print('f1:', f1)
     print("precision:", precision)
     print('recall:', recall)
+    print('time_cost = {:2f} seconds'.format(time_cost))
 
