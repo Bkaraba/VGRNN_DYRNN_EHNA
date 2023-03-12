@@ -109,7 +109,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 # set number of epochs
-inum_epochs = 20
+num_epochs = 20
 
 # initialize lists to store loss and accuracy for each epoch
 train_losses = []
