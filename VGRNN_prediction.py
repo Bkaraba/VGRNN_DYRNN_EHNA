@@ -1000,7 +1000,7 @@ seq_start = 0
 seq_end = seq_len - 3
 tst_after = 0
 
-for k in range(1000):
+for k in range(20):
     optimizer.zero_grad()
     start_time = time.time()
     kld_loss, nll_loss, _, _, hidden_st = model(x_in[seq_start:seq_end]

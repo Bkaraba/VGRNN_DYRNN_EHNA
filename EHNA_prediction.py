@@ -1,6 +1,7 @@
 import numpy as np
 import pickle
 import torch
+import time
 #from torch._C import double
 import torch.nn as nn
 import torch.optim as optim
@@ -108,7 +109,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 # set number of epochs
-num_epochs = 50
+inum_epochs = 20
 
 # initialize lists to store loss and accuracy for each epoch
 train_losses = []

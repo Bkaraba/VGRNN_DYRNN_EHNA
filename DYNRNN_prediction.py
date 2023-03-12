@@ -951,7 +951,7 @@ seq_len = 663
 seq_end = seq_len - 1
 tst_after = 0
 
-for k in range(50):
+for k in range(20):
     optimizer.zero_grad()
     start_time = time.time()
     def precision_score(y_true, y_pred):
